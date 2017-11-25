@@ -17,6 +17,7 @@ if not os.path.isfile(rrdfile):
         rrdfile,
         "--step", "1",
         "DS:temp_c:GAUGE:3:0:100",
+        "DS:temp_deriv:GAUGE:3:0:100",
         "DS:heater:GAUGE:3:0:1",
         "RRA:LAST:0.5:1:1800",
         "RRA:MIN:0.5:60:3600",
@@ -26,6 +27,9 @@ if not os.path.isfile(rrdfile):
 
 temp_l = 44.0
 temp_h = 44.3
+
+# Number of consecutive samples to average for a reading:
+average_count = 8
 
 def trigger_l():
     GPIO.output(7, 0)
@@ -43,20 +47,45 @@ GPIO.setmode(GPIO.BCM)
 GPIO.setup(7, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(8, GPIO.OUT, initial=GPIO.HIGH)
 
+# Main feedback:
+def check_temp(temp_c, derivative):
+    if not state and temp_c < temp_l:
+        state = 1
+        print("Below threshold ({0} C), turning on".format(temp_l))
+        trigger_l()
+    if state and temp_c > temp_h:
+        state = 0
+        print("Above threshold ({0} C), turning off".format(temp_h))
+        trigger_h()
+    
 state = 0
 try:
     fname = sys.argv[1] + "/w1_slave"
+    readings = []
+    last_tmp_avg_c = None
+    last_time_avg = None
+    tmp_avg_c = None
+    time_avg = None
     for temp_c in raspi_1w_temp.gen_temp_c(fname):
         #temp_f = c2f(temp_c)
-        print("{0}: {1:.3f} (C), {2}".format(time.strftime("%c"), temp_c, "on" if state else "off"))
-        r = rrdtool.update(rrdfile, "N:{0}:{1}".format(temp_c, state))
-        if not state and temp_c < temp_l:
-            state = 1
-            print("Below threshold ({0} C), turning on".format(temp_l))
-            trigger_l()
-        if state and temp_c > temp_h:
-            state = 0
-            print("Above threshold ({0} C), turning off".format(temp_h))
-            trigger_h()
+        #print("{0}: {1:.3f} (C), {2}".format(time.strftime("%c"), temp_c, "on" if state else "off"))
+        sys.stdout.write(".")
+        sys.flush()
+        readings.append(temp_c)
+        if len(readings) >= average_count:
+            last_tmp_avg_c = tmp_avg_c
+            last_time_avg = time_avg
+            time_avg = time.time()
+            tmp_avg_c = sum(readings) / float(len(readings))
+            readings = []
+            if last_time_avg is not None:
+                dt = time_avg - last_time_avg
+                derivative = (tmp_avg_c - last_tmp_avg_c) / dt
+                print("{0}: {1:.3f} (C) ({2:f} C/s), {3}".format(
+                    time.strftime("%c"), average_c, derivative,
+                    "on" if state else "off"))
+                r = rrdtool.update(rrdfile, "N:{0}:{1}:{2}".format(
+                    temp_c, state, derivative))
+                check_temp(tmp_avg_c, derivative)
 finally:
     off()
