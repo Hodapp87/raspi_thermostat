@@ -17,10 +17,10 @@ if not os.path.isfile(rrdfile):
     r = rrdtool.create(
         rrdfile,
         "--step", "1",
-        "DS:temp_c:GAUGE:3:0:100",
-        "DS:temp_deriv:GAUGE:3:0:100",
-        "DS:heater:GAUGE:3:0:1",
-        "RRA:LAST:0.5:1:1800",
+        "DS:temp_c:GAUGE:15:0:100",
+        "DS:temp_deriv:GAUGE:15:0:100",
+        "DS:heater:GAUGE:15:0:1",
+        "RRA:LAST:0.5:8:1800",
         "RRA:MIN:0.5:60:3600",
         "RRA:MAX:0.5:60:3600",
         "RRA:AVERAGE:0.5:60:3600",
@@ -31,6 +31,14 @@ temp_h = 44.3
 
 # Number of consecutive samples to average for a reading:
 average_count = 8
+
+# Maximum length of time to allow heater on for in seconds:
+heater_max_on = 300
+
+# Required cooldown multiplier (the time the heater was on is
+# multiplied by this to determine the delay until it can power
+# on again):
+cooldown_multiplier = 5
 
 def trigger_l():
     GPIO.output(7, 0)
@@ -68,6 +76,10 @@ try:
     last_time_avg = None
     tmp_avg_c = None
     time_avg = None
+    heat_time_on = None
+    heat_accum = 0
+    cooldown_wait = 0
+    last_time = time.time()
     for temp_c in raspi_1w_temp.gen_temp_c(fname):
         #temp_f = c2f(temp_c)
         #print("{0}: {1:.3f} (C), {2}".format(time.strftime("%c"), temp_c, "on" if state else "off"))
@@ -81,13 +93,25 @@ try:
             tmp_avg_c = sum(readings) / float(len(readings))
             readings = []
             if last_time_avg is not None:
-                dt = time_avg - last_time_avg
-                derivative = (tmp_avg_c - last_tmp_avg_c) / dt
-                print("{0}: {1:.3f} (C) ({2:f} C/s), {3}".format(
-                    time.strftime("%c"), tmp_avg_c, derivative,
-                    "on" if state else "off"))
+                derivative = (tmp_avg_c - last_tmp_avg_c) / (time_avg - last_time_avg)
                 r = rrdtool.update(rrdfile, "N:{0}:{1}:{2}".format(
                     temp_c, state, derivative))
-                state = check_temp(state, tmp_avg_c, derivative)
+                dt = time.time() - last_time
+                if state == 1:
+                    heat_accum += dt
+                if state == 0 and cooldown_wait > 0:
+                    cooldown_wait = max(cooldown_wait - dt, 0)
+                print("{0}: {1:.3f} (C) ({2:f} C/s), heater {3}".format(
+                    time.strftime("%c"), tmp_avg_c, derivative,
+                    "on ({0:.1f} sec)".format(heat_accum) if state else "off ({0:.1f} sec left to cool)".format(cooldown_wait)))
+                if heat_accum > heater_max_on:
+                    cooldown_wait = cooldown_multiplier * heat_accum
+                    heat_accum = 0
+                    print("Heater exceeded duty cycle - powering off for {0:.1f} sec".format(cooldown_wait))
+                    trigger_h()
+                    state = 0
+                if cooldown_wait == 0:
+                    state = check_temp(state, tmp_avg_c, derivative)
+                last_time = time.time()
 finally:
     off()
