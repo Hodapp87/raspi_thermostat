@@ -10,6 +10,7 @@ import os
 
 if len(sys.argv) != 3:
     print("Usage: {0} <1-wire temperature sensor> <RRD log file>".format(sys.argv[0]))
+    sys.exit(-1)
 
 rrdfile = sys.argv[2]
 if not os.path.isfile(rrdfile):
@@ -48,7 +49,7 @@ GPIO.setup(7, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(8, GPIO.OUT, initial=GPIO.HIGH)
 
 # Main feedback:
-def check_temp(temp_c, derivative):
+def check_temp(state, temp_c, derivative):
     if not state and temp_c < temp_l:
         state = 1
         print("Below threshold ({0} C), turning on".format(temp_l))
@@ -57,7 +58,8 @@ def check_temp(temp_c, derivative):
         state = 0
         print("Above threshold ({0} C), turning off".format(temp_h))
         trigger_h()
-    
+    return state
+
 state = 0
 try:
     fname = sys.argv[1] + "/w1_slave"
@@ -70,7 +72,7 @@ try:
         #temp_f = c2f(temp_c)
         #print("{0}: {1:.3f} (C), {2}".format(time.strftime("%c"), temp_c, "on" if state else "off"))
         sys.stdout.write(".")
-        sys.flush()
+        sys.stdout.flush()
         readings.append(temp_c)
         if len(readings) >= average_count:
             last_tmp_avg_c = tmp_avg_c
@@ -82,10 +84,10 @@ try:
                 dt = time_avg - last_time_avg
                 derivative = (tmp_avg_c - last_tmp_avg_c) / dt
                 print("{0}: {1:.3f} (C) ({2:f} C/s), {3}".format(
-                    time.strftime("%c"), average_c, derivative,
+                    time.strftime("%c"), tmp_avg_c, derivative,
                     "on" if state else "off"))
                 r = rrdtool.update(rrdfile, "N:{0}:{1}:{2}".format(
                     temp_c, state, derivative))
-                check_temp(tmp_avg_c, derivative)
+                state = check_temp(state, tmp_avg_c, derivative)
 finally:
     off()
