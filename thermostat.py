@@ -8,6 +8,8 @@ import rrdtool
 import sys
 import os
 
+import web_ui
+
 if len(sys.argv) != 3:
     print("Usage: {0} <1-wire temperature sensor> <RRD log file>".format(sys.argv[0]))
     sys.exit(-1)
@@ -27,7 +29,9 @@ if not os.path.isfile(rrdfile):
     )
 
 temp_l = 44.0
+web_ui.temp_l.value = temp_l
 temp_h = 44.3
+web_ui.temp_h.value = temp_h
 
 # Number of consecutive samples to average for a reading:
 average_count = 8
@@ -38,7 +42,7 @@ heater_max_on = 300
 # Required cooldown multiplier (the time the heater was on is
 # multiplied by this to determine the delay until it can power
 # on again):
-cooldown_multiplier = 5
+cooldown_multiplier = 1
 
 def trigger_l():
     GPIO.output(7, 0)
@@ -61,10 +65,12 @@ def check_temp(state, temp_c, derivative):
     if not state and temp_c < temp_l:
         state = 1
         print("Below threshold ({0} C), turning on".format(temp_l))
+        web_ui.heater_status.value = 1
         trigger_l()
     if state and temp_c > temp_h:
         state = 0
         print("Above threshold ({0} C), turning off".format(temp_h))
+        web_ui.heater_status.value = 0
         trigger_h()
     return state
 
@@ -91,6 +97,7 @@ try:
             last_time_avg = time_avg
             time_avg = time.time()
             tmp_avg_c = sum(readings) / float(len(readings))
+            web_ui.temp_current.value = tmp_avg_c
             readings = []
             if last_time_avg is not None:
                 derivative = (tmp_avg_c - last_tmp_avg_c) / (time_avg - last_time_avg)
@@ -99,19 +106,25 @@ try:
                 dt = time.time() - last_time
                 if state == 1:
                     heat_accum += dt
+                    web_ui.heater_time.value = heat_accum
                 if state == 0 and cooldown_wait > 0:
                     cooldown_wait = max(cooldown_wait - dt, 0)
+                    web_ui.cooldown_time.value = cooldown_wait
                 print("{0}: {1:.3f} (C) ({2:f} C/s), heater {3}".format(
                     time.strftime("%c"), tmp_avg_c, derivative,
                     "on ({0:.1f} sec)".format(heat_accum) if state else "off ({0:.1f} sec left to cool)".format(cooldown_wait)))
                 if heat_accum > heater_max_on:
                     cooldown_wait = cooldown_multiplier * heat_accum
+                    web_ui.cooldown_time.value = cooldown_wait
                     heat_accum = 0
+                    web_ui.heater_status.value = 0
+                    web_ui.heater_time.value = heat_accum
                     print("Heater exceeded duty cycle - powering off for {0:.1f} sec".format(cooldown_wait))
                     trigger_h()
                     state = 0
                 if cooldown_wait == 0:
                     state = check_temp(state, tmp_avg_c, derivative)
                 last_time = time.time()
+                web_ui.last_update.value = int(last_time)
 finally:
     off()
