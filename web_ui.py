@@ -19,7 +19,7 @@ def info():
     if heater_status.value:
         s1 = "On (for {:.1f} sec total)".format(heater_time.value)
     elif cooldown_time.value > 0.0:
-        s1 = "Off (duty-cycle cool for {:.1f} sec}".format(cooldown_time.value)
+        s1 = "Off (duty-cycle cool for {:.1f} sec)".format(cooldown_time.value)
     else:
         s1 = "Off (waiting for temperature < {:.1f})".format(temp_l.value)
     lines = [
